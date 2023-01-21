@@ -1,0 +1,4 @@
+go install github.com/warthog618/gpiod@latest
+go mod init  # creates module file 
+go mod tidy  # searches and includes modules 
+

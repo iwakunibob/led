@@ -1,0 +1,152 @@
+// This program accesses GPIO of RPI4 or RP400
+// References:
+// https://github.com/warthog618/gpiod/blob/master/example/blinker/blinker.go
+//
+
+// A simple example that toggles an output pin.
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/warthog618/gpiod"
+	"github.com/warthog618/gpiod/device/rpi"
+)
+
+const cycles = 120 // Number of cycles for led changes
+const cycsec = 4   // Number of cycles per second
+
+func SetOutputs(outBits int, outLines [8]*gpiod.Line) {
+	bitmasks := [...]int{0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80}
+	var v int
+	for i, m := range bitmasks {
+		v = m & outBits
+		outLines[i].SetValue(v)
+	}
+}
+
+func main() {
+	outputs := [...]int{rpi.GPIO27, rpi.GPIO26, rpi.GPIO25, rpi.GPIO24, rpi.GPIO23, rpi.GPIO22, rpi.GPIO17, rpi.GPIO16}
+
+	v := 0
+	var outp int
+	var louts [8]*gpiod.Line
+
+	fmt.Print(
+		"Welcome to the light toggle program.\n",
+		"Select the mode from list below:",
+		"\n    R = Right shift bit",
+		"\n    L = Left shift bit",
+		"\n    C = Count in binary",
+		"\n    K = Knocker lights",
+		"\n    Q = Quit\n>")
+
+	reader := bufio.NewReader(os.Stdin)
+	mode, err := reader.ReadString('\n')
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	mode = strings.ToUpper(mode[0:1])
+	fmt.Println("Entered mode: ", mode)
+
+	for i, o := range outputs {
+		l, err := gpiod.RequestLine("gpiochip0", o, gpiod.AsOutput(v))
+		if err != nil {
+			panic(err)
+		}
+		// revert line to input on the way out.
+		defer func() {
+			l.Reconfigure(gpiod.AsInput)
+			l.Close()
+		}()
+		louts[i] = l
+		fmt.Printf("2^%d GPIO %d = %d\n", i, o, v)
+	}
+	// Capture exit signals to ensure pin is reverted to input on exit.
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(quit)
+
+	if mode == "R" {
+		outp = 0x80 // initial outputs
+		for j := 0; j <= cycles; j++ {
+			select {
+			case <-time.After(time.Second / cycsec):
+				if outp == 0 && j < cycles {
+					outp = 0x80
+				}
+				fmt.Printf("%03d: Output Byte = 0x%02X = %08b\n", j, outp, outp)
+				SetOutputs(outp, louts)
+				outp = outp >> 1
+			case <-quit:
+				return
+			}
+		}
+	}
+
+	if mode == "L" {
+		outp = 0x01 // initial outputs
+		for j := 0; j <= cycles; j++ {
+			select {
+			case <-time.After(time.Second / cycsec):
+				if outp > 0x80 {
+					if j == cycles {
+						outp = 0
+					} else {
+						outp = 0x01
+					}
+				}
+				fmt.Printf("%03d: Output Byte = 0x%02X = %08b\n", j, outp, outp)
+				SetOutputs(outp, louts)
+				outp = outp << 1
+			case <-quit:
+				return
+			}
+		}
+	}
+
+	if mode == "C" {
+		outp = 0 // initial outputs
+		for j := 0; j <= 256; j++ {
+			select {
+			case <-time.After(time.Second / cycsec):
+				if outp > 0xFF {
+					outp = 0
+				}
+				fmt.Printf("%03d: Output Byte = 0x%02X = %08b\n", j, outp, outp)
+				SetOutputs(outp, louts)
+				outp++
+			case <-quit:
+				return
+			}
+		}
+	}
+
+	if mode == "K" {
+		outseq := [...]int{0x81, 0x42, 0x24, 0x18, 0x24, 0x42} // sequencer
+		i := 0
+
+		for j := 0; j <= cycles; j++ {
+			select {
+			case <-time.After(time.Second / cycsec):
+				outp = outseq[i]
+				fmt.Printf("%3d: Output Byte = %02X = %08b\n", j, outp, outp)
+				SetOutputs(outp, louts)
+				i++
+				if i == len(outseq) {
+					i = 0
+				}
+			case <-quit:
+				return
+			}
+		}
+	}
+}
