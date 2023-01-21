@@ -19,9 +19,9 @@ import (
 	"github.com/warthog618/gpiod"
 )
 
-const totOutpLines = 8 // Total number of output lines used
-const cycles = 64      // Number of cycles for led changes
-const cycsec = 4       // Number of cycles per second
+const totOutpLines = 11 // Total number of output lines used
+const cycles = 64       // Number of cycles for led changes
+const cycsec = 4        // Number of cycles per second
 
 func getMode() string {
 	fmt.Print(
@@ -31,6 +31,7 @@ func getMode() string {
 		"\n    L = Left shift bit",
 		"\n    C = Count in binary",
 		"\n    K = Knocker lights",
+		"\n    T = Tri-color light",
 		"\n    Q = Quit\n>")
 	for {
 		reader := bufio.NewReader(os.Stdin)
@@ -39,7 +40,7 @@ func getMode() string {
 			log.Fatal(err)
 		}
 		mode = strings.ToUpper(mode[0:1])
-		if mode == "R" || mode == "L" || mode == "C" || mode == "K" || mode == "Q" {
+		if mode == "R" || mode == "L" || mode == "C" || mode == "K" || mode == "T" || mode == "Q" {
 			return mode
 		} else {
 			fmt.Print("Error you must type one of letters listed above\n>")
@@ -57,7 +58,7 @@ func setOutputs(outBits int, outLns [totOutpLines]*gpiod.Line) {
 }
 
 func main() {
-	piPortsOut := [totOutpLines]int{27, 26, 25, 24, 23, 22, 17, 16}
+	piPortsOut := [totOutpLines]int{27, 26, 25, 24, 23, 22, 17, 16, 12, 20, 21}
 	outp := 0xFF
 	var outpLines [totOutpLines]*gpiod.Line
 
@@ -134,6 +135,25 @@ func main() {
 				}
 			}
 		} else if mode == "K" {
+			outseq := [...]int{0x81, 0x42, 0x24, 0x18, 0x24, 0x42} // sequencer
+			i := 0
+
+			for j := 0; j < cycles; j++ {
+				select {
+				case <-time.After(time.Second / cycsec):
+					outp = outseq[i]
+					fmt.Printf("%3d: Output Byte = %02X = %08b\n", j, outp, outp)
+					setOutputs(outp, outpLines)
+					i++
+					if i == len(outseq) {
+						i = 0
+					}
+				case <-quit:
+					return
+				}
+			}
+		}
+		} else if mode == "T" {
 			outseq := [...]int{0x81, 0x42, 0x24, 0x18, 0x24, 0x42} // sequencer
 			i := 0
 
